@@ -1,0 +1,27 @@
+# Environments
+.env
+venv/
+env/
+ENV/
+
+# Python caches and compiled files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# IDE and OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Test scripts and diagnostic dumps generated during debugging
+test_*.py
+parse_*.py
+*.html
+watcher2.py
+blinkit_test.py/
+
+# Logs and databases
+*.log
+*.sqlite3

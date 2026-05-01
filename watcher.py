@@ -205,8 +205,10 @@ def run():
                     page.reload(timeout=15000)
                     page.wait_for_timeout(4000) # Wait for React to render product cards
                     
-                    page.mouse.wheel(0, 500)
-                    page.wait_for_timeout(1000)
+                    # Scroll multiple times to trigger lazy-loaded products
+                    for _ in range(4):
+                        page.mouse.wheel(0, 1000)
+                        page.wait_for_timeout(1000)
 
                     items = extract_products(page)
                     print(f"[{name}] Extracted {len(items)} matching products from search.")
@@ -244,6 +246,11 @@ def start_dummy_server():
             self.send_header('Content-type','text/plain')
             self.end_headers()
             self.wfile.write(b"Bot is running!")
+            
+        def do_HEAD(self):
+            self.send_response(200)
+            self.send_header('Content-type','text/plain')
+            self.end_headers()
     
     server = HTTPServer(('0.0.0.0', port), Handler)
     print(f"🌐 Started dummy web server on port {port} to satisfy Render requirements.")

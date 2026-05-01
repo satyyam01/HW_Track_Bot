@@ -1,6 +1,9 @@
 # Use the official Playwright image which includes all dependencies for Chromium
 FROM mcr.microsoft.com/playwright/python:v1.40.0-jammy
 
+# Set environment variable to ensure python output is not buffered
+ENV PYTHONUNBUFFERED=1
+
 # Set the working directory
 WORKDIR /app
 

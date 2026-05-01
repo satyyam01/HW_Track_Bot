@@ -167,10 +167,14 @@ def run():
                     page.wait_for_timeout(1000)
 
                 # 2. Click "Detect my location" so the context's geolocation is actually used
-                loc_btn = page.locator("text='Detect my location'")
-                if loc_btn.count() > 0:
-                    loc_btn.first.click()
+                try:
+                    loc_btn = page.locator("text='Detect my location'").first
+                    loc_btn.wait_for(timeout=5000, state="visible")
+                    loc_btn.click()
+                    print(f"[{loc['name']}] Clicked 'Detect my location'")
                     page.wait_for_timeout(3000) # Wait for products to load
+                except Exception:
+                    print(f"[{loc['name']}] 'Detect my location' button not found or not visible.")
             except Exception as e:
                 print(f"Setup error for {loc['name']}: {e}")
             # ----------------------------------------
@@ -182,7 +186,15 @@ def run():
             seen_search_items[loc["name"]] = set()
             alerted_sniper_urls[loc["name"]] = set()
 
+        last_heartbeat = time.time()
+        send_telegram(f"✅ HW Track Bot has started successfully. Monitoring {len(LOCATIONS)} locations.")
+
         while True:
+            # 12-hour heartbeat check (12 hours * 60 mins * 60 secs = 43200 seconds)
+            if time.time() - last_heartbeat >= 43200:
+                send_telegram(f"✅ HW Track Bot is online and operational. Monitoring {len(LOCATIONS)} locations.")
+                last_heartbeat = time.time()
+
             triggered = False
 
             for name, ctx in contexts.items():

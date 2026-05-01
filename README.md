@@ -1,4 +1,4 @@
-# Hot Wheels Track Bot (Blinkit Sniper) 🏎️💨
+# Hot Wheels Track Bot 🏎️💨
 
 A robust, location-aware automated web scraper built with Python and Playwright. This bot continuously monitors Blinkit for incoming "Hot Wheels" restocks in specified geolocations, bypassing anti-bot measures and instantly alerting you via Telegram when drops occur.
 
@@ -24,7 +24,7 @@ A robust, location-aware automated web scraper built with Python and Playwright.
    CHAT_ID="YOUR_PERSONAL_CHAT_ID"
    
    # Format: Name:Lat:Lng,Name:Lat:Lng
-   LOCATIONS=Bangalore:12.9241054:77.6254245,Delhi:28.6324096:77.3087659
+   LOCATIONS=
    
    TRACK_QUERY=hot wheels
    KEYWORDS=ferrari,porsche,civic,mustang,hot wheels

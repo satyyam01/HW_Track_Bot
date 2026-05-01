@@ -104,11 +104,31 @@ def check_product_pages(context, loc_name, alerted_urls):
         page = None
         try:
             page = context.new_page()
-            page.goto(url, timeout=15000)
-
-            html = page.content().lower()
-
-            if "add to cart" in html or "add" in html:
+            page.goto(url, timeout=20000)
+            page.wait_for_timeout(2500)
+            
+            current_url = page.url
+            is_available = False
+            
+            # 1. Ensure we didn't get redirected to the homepage
+            if "/prn/" in current_url or "/prid/" in current_url:
+                
+                # 2. Look for an exact "ADD" button
+                buttons = page.locator("div[role='button'], button").all_inner_texts()
+                has_add = any(b.strip().upper() in ["ADD", "ADD TO CART"] for b in buttons)
+                
+                # 3. Look for "Out of stock" text anywhere on the page
+                oos_count = (
+                    page.locator("text='Out of Stock'").count() + 
+                    page.locator("text='Out of stock'").count() + 
+                    page.locator("text='Currently Unavailable'").count()
+                )
+                
+                # It's only truly available if an ADD button exists AND it doesn't say Out of Stock
+                if has_add and oos_count == 0:
+                    is_available = True
+            
+            if is_available:
                 if url not in alerted_urls:
                     send_telegram(f"🔥 PRODUCT LIVE ({loc_name})\n{url}")
                     alerted_urls.add(url)

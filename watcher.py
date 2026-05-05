@@ -38,7 +38,7 @@ except ValueError:
 try:
     WATCHDOG_TIMEOUT = int(os.getenv("WATCHDOG_TIMEOUT", "300").strip())
 except ValueError:
-    WATCHDOG_TIMEOUT = 300
+    WATCHDOG_TIMEOUT = 180
 
 LAST_LOOP_TIME = time.time()
 

@@ -120,6 +120,8 @@ def extract_products(page):
 
 def check_product_pages(context, loc_name, alerted_urls):
     triggered = False
+    if PRODUCT_URLS:
+        print(f"[{loc_name}] Starting sniper check for {len(PRODUCT_URLS)} links...")
 
     for url in PRODUCT_URLS:
         page = None
@@ -255,9 +257,6 @@ def run():
         last_heartbeat_hour = datetime.now(IST).hour
 
         while True:
-            global LAST_LOOP_TIME
-            LAST_LOOP_TIME = time.time()
-            
             from datetime import datetime, timezone, timedelta
             IST = timezone(timedelta(hours=5, minutes=30))
             now = datetime.now(IST)
@@ -275,6 +274,9 @@ def run():
             triggered = False
 
             for name, ctx in contexts.items():
+                global LAST_LOOP_TIME
+                LAST_LOOP_TIME = time.time()
+
                 page = ctx["page"]
                 context = ctx["context"]
 
@@ -344,8 +346,8 @@ def start_dummy_server():
             self.wfile.write(b"Bot is running!")
             
         def do_HEAD(self):
-            # Watchdog check: if main loop hasn't run in 5 minutes, return 500
-            if time.time() - LAST_LOOP_TIME > 300:
+            # Watchdog check: if main loop hasn't run in 10 minutes, return 500
+            if time.time() - LAST_LOOP_TIME > 600:
                 self.send_response(500)
                 self.send_header('Content-type','text/plain')
                 self.end_headers()

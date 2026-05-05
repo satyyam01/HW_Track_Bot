@@ -30,6 +30,11 @@ try:
 except ValueError:
     BLOCK_PAUSE_MINUTES = 60
 
+try:
+    PAGE_TIMEOUT = int(os.getenv("PAGE_TIMEOUT", "60000").strip())
+except ValueError:
+    PAGE_TIMEOUT = 60000
+
 LAST_LOOP_TIME = time.time()
 
 def parse_locations():
@@ -210,7 +215,7 @@ def run():
             page = context.new_page()
             url = f"https://blinkit.com/s/?q={QUERY.replace(' ', '%20')}"
             try:
-                page.goto(url, timeout=60000)
+                page.goto(url, timeout=PAGE_TIMEOUT)
             except Exception as e:
                 print(f"⚠️ Proxy Timeout on {loc['name']}. Rotating IP...")
                 os._exit(1)
@@ -274,7 +279,7 @@ def run():
                 context = ctx["context"]
 
                 try:
-                    page.reload(timeout=15000)
+                    page.reload(timeout=PAGE_TIMEOUT)
                     page.wait_for_timeout(4000) # Wait for React to render product cards
                     # --- CAPTCHA / IP BLOCK CHECK ---
                     try:

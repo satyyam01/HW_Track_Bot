@@ -262,7 +262,6 @@ def run():
                 # Perform daily restart to clear memory and attempt IP rotation
                 if now.hour == RESTART_HOUR:
                     send_telegram(f"♻️ HW Track Bot performing scheduled daily restart (Hour {RESTART_HOUR}) to clear memory...")
-                    import os
                     os._exit(1)
 
             triggered = False
@@ -284,7 +283,6 @@ def run():
                             for _ in range(BLOCK_PAUSE_MINUTES):
                                 LAST_LOOP_TIME = time.time()
                                 time.sleep(60)
-                            import os
                             os._exit(1)
                     except Exception:
                         pass
@@ -320,7 +318,6 @@ def run():
                     err_str = str(e).lower()
                     if "target closed" in err_str or "browser closed" in err_str or "disconnected" in err_str:
                         print("⚠️ FATAL: Browser crash detected. Exiting process to trigger container restart...")
-                        import os
                         os._exit(1)
 
             if triggered:

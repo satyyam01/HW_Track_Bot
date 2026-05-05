@@ -281,8 +281,9 @@ def run():
                     try:
                         page_text = page.locator("body").inner_text().lower()
                         if "verify you are human" in page_text or "just a moment" in page_text or "access denied" in page_text:
-                            print(f"⚠️ Captcha/IP Block detected on {name}!")
-                            send_telegram(f"🚨 CAPTCHA/IP BLOCK DETECTED on {name}! Render IP is blocked by Blinkit. Pausing bot for {BLOCK_PAUSE_MINUTES} minutes to prevent spam...")
+                            msg = f"🚨 CAPTCHA/IP BLOCK DETECTED on {name}! Render IP is blocked by Blinkit. Pausing bot for {BLOCK_PAUSE_MINUTES} minutes to prevent spam..."
+                            print(msg)
+                            send_telegram(msg)
                             # Sleep in small chunks to keep watchdog alive
                             for _ in range(BLOCK_PAUSE_MINUTES):
                                 LAST_LOOP_TIME = time.time()

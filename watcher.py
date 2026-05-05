@@ -35,6 +35,11 @@ try:
 except ValueError:
     PAGE_TIMEOUT = 60000
 
+try:
+    WATCHDOG_TIMEOUT = int(os.getenv("WATCHDOG_TIMEOUT", "300").strip())
+except ValueError:
+    WATCHDOG_TIMEOUT = 300
+
 LAST_LOOP_TIME = time.time()
 
 def parse_locations():
@@ -346,8 +351,8 @@ def start_dummy_server():
             self.wfile.write(b"Bot is running!")
             
         def do_HEAD(self):
-            # Watchdog check: if main loop hasn't run in 10 minutes, return 500
-            if time.time() - LAST_LOOP_TIME > 600:
+            # Watchdog check: if main loop hasn't run in X seconds, return 500
+            if time.time() - LAST_LOOP_TIME > WATCHDOG_TIMEOUT:
                 self.send_response(500)
                 self.send_header('Content-type','text/plain')
                 self.end_headers()

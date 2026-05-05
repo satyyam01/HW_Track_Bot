@@ -209,7 +209,11 @@ def run():
 
             page = context.new_page()
             url = f"https://blinkit.com/s/?q={QUERY.replace(' ', '%20')}"
-            page.goto(url)
+            try:
+                page.goto(url, timeout=60000)
+            except Exception as e:
+                print(f"⚠️ Proxy Timeout on {loc['name']}. Rotating IP...")
+                os._exit(1)
 
             # ---- Blinkit Specific Initialization ----
             try:

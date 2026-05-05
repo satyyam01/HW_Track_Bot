@@ -39,14 +39,17 @@ def parse_locations():
 LOCATIONS = parse_locations()
 
 def send_telegram(msg):
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    data = {"chat_id": CHAT_ID, "text": msg}
-    try:
-        res = requests.post(url, data=data, timeout=5)
-        if res.status_code != 200:
-            print(f"⚠️ Telegram Error: {res.text}")
-    except Exception as e:
-        print(f"⚠️ Telegram Exception: {e}")
+    chat_ids = [cid.strip() for cid in CHAT_ID.split(",") if cid.strip()]
+    
+    for chat_id in chat_ids:
+        url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+        data = {"chat_id": chat_id, "text": msg}
+        try:
+            res = requests.post(url, data=data, timeout=5)
+            if res.status_code != 200:
+                print(f"⚠️ Telegram Error (Chat {chat_id}): {res.text}")
+        except Exception as e:
+            print(f"⚠️ Telegram Exception (Chat {chat_id}): {e}")
 
 def matches_keywords(text):
     if not KEYWORDS:

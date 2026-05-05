@@ -248,7 +248,6 @@ def run():
         from datetime import datetime, timezone, timedelta
         IST = timezone(timedelta(hours=5, minutes=30))
         last_heartbeat_hour = datetime.now(IST).hour
-        send_telegram(f"✅ HW Track Bot has started successfully. Monitoring {len(LOCATIONS)} locations.")
 
         while True:
             global LAST_LOOP_TIME
@@ -321,8 +320,8 @@ def run():
                 except Exception as e:
                     print(f"Error ({name}):", e)
                     err_str = str(e).lower()
-                    if "target closed" in err_str or "browser closed" in err_str or "disconnected" in err_str:
-                        print("⚠️ FATAL: Browser crash detected. Exiting process to trigger container restart...")
+                    if "target closed" in err_str or "browser closed" in err_str or "disconnected" in err_str or "timeout" in err_str:
+                        print("⚠️ FATAL: Browser or proxy failure detected. Exiting process to trigger container restart...")
                         os._exit(1)
 
             if triggered:

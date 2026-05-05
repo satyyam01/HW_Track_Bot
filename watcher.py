@@ -221,6 +221,8 @@ def run():
 
             page = context.new_page()
             url = f"https://blinkit.com/s/?q={QUERY.replace(' ', '%20')}"
+            print(f"[{loc['name']}] Loading Blinkit... (Timeout: {PAGE_TIMEOUT}ms)")
+            time.sleep(2) # Stagger to avoid proxy spikes
             try:
                 page.goto(url, timeout=PAGE_TIMEOUT)
             except Exception as e:

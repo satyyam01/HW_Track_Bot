@@ -25,6 +25,11 @@ try:
 except ValueError:
     RESTART_HOUR = 21
 
+try:
+    BLOCK_PAUSE_MINUTES = int(os.getenv("BLOCK_PAUSE_MINUTES", "60").strip())
+except ValueError:
+    BLOCK_PAUSE_MINUTES = 60
+
 LAST_LOOP_TIME = time.time()
 
 def parse_locations():
@@ -166,9 +171,26 @@ def run():
     print("🚀 Starting watcher...")
 
     with sync_playwright() as p:
+        proxy_cfg = None
+        if os.getenv("PROXY_URL"):
+            p_url = os.getenv("PROXY_URL")
+            if "@" in p_url:
+                # Parse http://user:pass@host:port
+                import urllib.parse
+                parsed = urllib.parse.urlparse(p_url)
+                proxy_cfg = {
+                    "server": f"{parsed.scheme}://{parsed.hostname}:{parsed.port}",
+                    "username": parsed.username,
+                    "password": parsed.password
+                }
+            else:
+                proxy_cfg = {"server": p_url}
+            print("🌐 Using Proxy Server configuration.")
+
         browser = p.chromium.launch(
             headless=True,
-            args=["--disable-blink-features=AutomationControlled"]
+            args=["--disable-blink-features=AutomationControlled"],
+            proxy=proxy_cfg
         )
 
         contexts = {}
@@ -219,7 +241,9 @@ def run():
             seen_search_items[loc["name"]] = set()
             alerted_sniper_urls[loc["name"]] = set()
 
-        last_heartbeat_hour = -1
+        from datetime import datetime, timezone, timedelta
+        IST = timezone(timedelta(hours=5, minutes=30))
+        last_heartbeat_hour = datetime.now(IST).hour
         send_telegram(f"✅ HW Track Bot has started successfully. Monitoring {len(LOCATIONS)} locations.")
 
         while True:
@@ -255,7 +279,12 @@ def run():
                         page_text = page.locator("body").inner_text().lower()
                         if "verify you are human" in page_text or "just a moment" in page_text or "access denied" in page_text:
                             print(f"⚠️ Captcha/IP Block detected on {name}!")
-                            send_telegram(f"🚨 CAPTCHA/IP BLOCK DETECTED on {name}! Restarting container to attempt IP cycle.")
+                            send_telegram(f"🚨 CAPTCHA/IP BLOCK DETECTED on {name}! Render IP is blocked by Blinkit. Pausing bot for {BLOCK_PAUSE_MINUTES} minutes to prevent spam...")
+                            # Sleep in small chunks to keep watchdog alive
+                            for _ in range(BLOCK_PAUSE_MINUTES):
+                                global LAST_LOOP_TIME
+                                LAST_LOOP_TIME = time.time()
+                                time.sleep(60)
                             import os
                             os._exit(1)
                     except Exception:

@@ -282,7 +282,6 @@ def run():
                             send_telegram(f"🚨 CAPTCHA/IP BLOCK DETECTED on {name}! Render IP is blocked by Blinkit. Pausing bot for {BLOCK_PAUSE_MINUTES} minutes to prevent spam...")
                             # Sleep in small chunks to keep watchdog alive
                             for _ in range(BLOCK_PAUSE_MINUTES):
-                                global LAST_LOOP_TIME
                                 LAST_LOOP_TIME = time.time()
                                 time.sleep(60)
                             import os

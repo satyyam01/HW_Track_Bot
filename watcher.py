@@ -36,7 +36,7 @@ except ValueError:
     PAGE_TIMEOUT = 60000
 
 try:
-    WATCHDOG_TIMEOUT = int(os.getenv("WATCHDOG_TIMEOUT", "300").strip())
+    WATCHDOG_TIMEOUT = int(os.getenv("WATCHDOG_TIMEOUT", "180").strip())
 except ValueError:
     WATCHDOG_TIMEOUT = 180
 

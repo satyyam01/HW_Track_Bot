@@ -19,6 +19,14 @@ PRODUCT_URLS = [u.strip() for u in os.getenv("PRODUCT_URLS", "").split(",") if u
 CHECK_INTERVAL = int(os.getenv("CHECK_INTERVAL", 8))
 COOLDOWN = int(os.getenv("COOLDOWN", 40))
 
+HEARTBEAT_HOURS = [int(h.strip()) for h in os.getenv("HEARTBEAT_HOURS", "9,21").split(",") if h.strip().isdigit()]
+try:
+    RESTART_HOUR = int(os.getenv("RESTART_HOUR", "21").strip())
+except ValueError:
+    RESTART_HOUR = 21
+
+LAST_LOOP_TIME = time.time()
+
 def parse_locations():
     raw = os.getenv("LOCATIONS", "")
     if not raw.strip():
@@ -211,14 +219,27 @@ def run():
             seen_search_items[loc["name"]] = set()
             alerted_sniper_urls[loc["name"]] = set()
 
-        last_heartbeat = time.time()
+        last_heartbeat_hour = -1
         send_telegram(f"✅ HW Track Bot has started successfully. Monitoring {len(LOCATIONS)} locations.")
 
         while True:
-            # 12-hour heartbeat check (12 hours * 60 mins * 60 secs = 43200 seconds)
-            if time.time() - last_heartbeat >= 43200:
+            global LAST_LOOP_TIME
+            LAST_LOOP_TIME = time.time()
+            
+            from datetime import datetime, timezone, timedelta
+            IST = timezone(timedelta(hours=5, minutes=30))
+            now = datetime.now(IST)
+            
+            # Dynamic heartbeat check
+            if now.hour in HEARTBEAT_HOURS and now.minute <= 5 and last_heartbeat_hour != now.hour:
                 send_telegram(f"✅ HW Track Bot is online and operational. Monitoring {len(LOCATIONS)} locations.")
-                last_heartbeat = time.time()
+                last_heartbeat_hour = now.hour
+                
+                # Perform daily restart to clear memory and attempt IP rotation
+                if now.hour == RESTART_HOUR:
+                    send_telegram(f"♻️ HW Track Bot performing scheduled daily restart (Hour {RESTART_HOUR}) to clear memory...")
+                    import os
+                    os._exit(1)
 
             triggered = False
 
@@ -229,6 +250,17 @@ def run():
                 try:
                     page.reload(timeout=15000)
                     page.wait_for_timeout(4000) # Wait for React to render product cards
+                    # --- CAPTCHA / IP BLOCK CHECK ---
+                    try:
+                        page_text = page.locator("body").inner_text().lower()
+                        if "verify you are human" in page_text or "just a moment" in page_text or "access denied" in page_text:
+                            print(f"⚠️ Captcha/IP Block detected on {name}!")
+                            send_telegram(f"🚨 CAPTCHA/IP BLOCK DETECTED on {name}! Restarting container to attempt IP cycle.")
+                            import os
+                            os._exit(1)
+                    except Exception:
+                        pass
+                    # --------------------------------
                     
                     # Scroll multiple times to trigger lazy-loaded products
                     for _ in range(4):
@@ -278,6 +310,13 @@ def start_dummy_server():
             self.wfile.write(b"Bot is running!")
             
         def do_HEAD(self):
+            # Watchdog check: if main loop hasn't run in 5 minutes, return 500
+            if time.time() - LAST_LOOP_TIME > 300:
+                self.send_response(500)
+                self.send_header('Content-type','text/plain')
+                self.end_headers()
+                return
+                
             self.send_response(200)
             self.send_header('Content-type','text/plain')
             self.end_headers()

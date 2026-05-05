@@ -334,7 +334,7 @@ def run():
                 except Exception as e:
                     print(f"Error ({name}):", e)
                     err_str = str(e).lower()
-                    if "target closed" in err_str or "browser closed" in err_str or "disconnected" in err_str or "timeout" in err_str:
+                    if any(x in err_str for x in ["target closed", "browser closed", "disconnected", "timeout", "tunnel", "connection refused", "connection reset"]):
                         print("⚠️ FATAL: Browser or proxy failure detected. Exiting process to trigger container restart...")
                         os._exit(1)
 

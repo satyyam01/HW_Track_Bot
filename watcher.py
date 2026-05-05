@@ -127,6 +127,8 @@ def check_product_pages(context, loc_name, alerted_urls):
                 # It's only truly available if an ADD button exists AND it doesn't say Out of Stock
                 if has_add and oos_count == 0:
                     is_available = True
+                    
+            print(f"[{loc_name}] Checked link {url[-6:]} | In Stock: {is_available}")
             
             if is_available:
                 if url not in alerted_urls:
@@ -252,6 +254,11 @@ def run():
 
                 except Exception as e:
                     print(f"Error ({name}):", e)
+                    err_str = str(e).lower()
+                    if "target closed" in err_str or "browser closed" in err_str or "disconnected" in err_str:
+                        print("⚠️ FATAL: Browser crash detected. Exiting process to trigger container restart...")
+                        import os
+                        os._exit(1)
 
             if triggered:
                 time.sleep(COOLDOWN)

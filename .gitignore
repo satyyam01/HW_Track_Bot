@@ -4,6 +4,9 @@ venv/
 env/
 ENV/
 
+# Local run file
+run_local.ps1
+
 # Python caches and compiled files
 __pycache__/
 *.py[cod]

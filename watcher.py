@@ -102,21 +102,46 @@ def format_product_text(raw_text):
                 name = line.title()
                 
     qty_str = f" ({qty})" if qty else ""
-    return f"🏎️ {name}\n💰 {price}{qty_str} | ⏱️ {time_est}"
+    formatted = f"🏎️ {name}\n💰 {price}{qty_str} | ⏱️ {time_est}"
+    return (name, formatted)  # Return tuple: (name for dedup, full string for display)
 
 def extract_products(page):
     items = []
 
     try:
-        # Blinkit product cards are divs with role="button", not <a> tags!
-        texts = page.locator("div[role='button']").all_inner_texts()
+        # Blinkit product cards are divs with role="button"], not <a> tags!
+        cards = page.locator("div[role='button']").all()
 
-        for text in texts:
-            text_lower = text.lower().replace("₹", "rs. ")
-            if "hot wheels" in text_lower and matches_keywords(text_lower):
-                if "\n" in text_lower or "rs." in text_lower:
-                    formatted = format_product_text(text.replace("₹", "Rs. "))
-                    items.append(formatted)
+        for card in cards:
+            try:
+                text = card.inner_text()
+                text_lower = text.lower().replace("₹", "rs. ")
+
+                if "hot wheels" not in text_lower or not matches_keywords(text_lower):
+                    continue
+                if "\n" not in text_lower and "rs." not in text_lower:
+                    continue
+
+                # --- AVAILABILITY CHECK (same as sniper) ---
+                # Check for "ADD" button inside this specific card
+                card_buttons = card.locator("div[role='button'], button").all_inner_texts()
+                has_add = any(b.strip().upper() in ["ADD", "ADD TO CART"] for b in card_buttons)
+
+                # Check for out-of-stock / notify indicators
+                has_oos = any(x in text_lower for x in ["out of stock", "currently unavailable", "notify me", "notify", "coming soon"])
+
+                if not has_add and not has_oos:
+                    # If no ADD button but also no OOS text, still include it
+                    # (some cards have price but ADD button is in a nested element)
+                    has_add = "rs." in text_lower or "₹" in text.lower()
+
+                if has_oos:
+                    continue  # Skip out-of-stock products
+
+                name, formatted = format_product_text(text.replace("₹", "Rs. "))
+                items.append((name, formatted))
+            except:
+                continue
 
     except:
         pass
@@ -219,6 +244,19 @@ def run():
                 user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
             )
 
+            # --- DATA SAVER MODE ---
+            # Blocks images, media, fonts, and common analytics to save ~80% bandwidth
+            def handle_route(route):
+                if route.request.resource_type in ["image", "media", "font"]:
+                    return route.abort()
+                # Block common trackers/analytics
+                url = route.request.url.lower()
+                if any(x in url for x in ["google-analytics", "doubleclick", "facebook", "analytics", "hotjar", "mixpanel"]):
+                    return route.abort()
+                return route.continue_()
+
+            context.route("**/*", handle_route)
+
             page = context.new_page()
             url = f"https://blinkit.com/s/?q={QUERY.replace(' ', '%20')}"
             print(f"[{loc['name']}] Loading Blinkit... (Timeout: {PAGE_TIMEOUT}ms)")
@@ -312,20 +350,22 @@ def run():
                         page.wait_for_timeout(1000)
 
                     items = extract_products(page)
-                    print(f"[{name}] Extracted {len(items)} matching products from search.")
 
                     new_hits = []
 
-                    for item in items:
-                        if item not in seen_search_items[name]:
-                            seen_search_items[name].add(item)
-                            new_hits.append(item)
+                    for product_name, product_display in items:
+                        if product_name not in seen_search_items[name]:
+                            seen_search_items[name].add(product_name)
+                            new_hits.append(product_display)
 
                     if new_hits:
+                        print(f"[{name}] 🆕 Found {len(new_hits)} NEW products! (Total: {len(items)})")
                         msg = f"🔥 DROP ({name})\n\n" + "\n\n".join(new_hits[:10])
-                        print(f"\n{msg}\n") # Print to console
+                        print(f"\n{msg}\n")
                         send_telegram(msg)
                         triggered = True
+                    else:
+                        print(f"[{name}] Checked — {len(items)} products, no new finds.")
 
                     # sniper check
                     if check_product_pages(context, name, alerted_sniper_urls[name]):

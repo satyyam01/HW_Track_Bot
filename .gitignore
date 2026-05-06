@@ -6,6 +6,8 @@ ENV/
 
 # Local run file
 run_local.ps1
+_auto_restart_wrapper.ps1
+logs/
 
 # Python caches and compiled files
 __pycache__/

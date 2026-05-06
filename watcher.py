@@ -2,9 +2,16 @@ import os
 import time
 import requests
 import threading
+from datetime import datetime, timezone, timedelta
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from dotenv import load_dotenv
 from playwright.sync_api import sync_playwright
+
+try:
+    from twilio.rest import Client as TwilioClient
+    TWILIO_AVAILABLE = True
+except ImportError:
+    TWILIO_AVAILABLE = False
 
 load_dotenv()
 
@@ -40,7 +47,21 @@ try:
 except ValueError:
     WATCHDOG_TIMEOUT = 180
 
+# --- Twilio Voice Call Config ---
+TWILIO_SID = os.getenv("TWILIO_ACCOUNT_SID", "")
+TWILIO_AUTH = os.getenv("TWILIO_AUTH_TOKEN", "")
+TWILIO_PHONE = os.getenv("TWILIO_PHONE_NUMBER", "")  # Your Twilio number (e.g. +1234567890)
+MY_PHONE = os.getenv("MY_PHONE_NUMBER", "")            # Your personal number to call (e.g. +91XXXXXXXXXX)
+CALL_ENABLED = all([TWILIO_SID, TWILIO_AUTH, TWILIO_PHONE, MY_PHONE, TWILIO_AVAILABLE])
+
 LAST_LOOP_TIME = time.time()
+
+IST = timezone(timedelta(hours=5, minutes=30))
+
+def log(msg):
+    """Print with IST timestamp prefix."""
+    ts = datetime.now(IST).strftime("%H:%M:%S")
+    print(f"[{ts}] {msg}")
 
 def parse_locations():
     raw = os.getenv("LOCATIONS", "")
@@ -70,9 +91,40 @@ def send_telegram(msg):
         try:
             res = requests.post(url, data=data, timeout=5)
             if res.status_code != 200:
-                print(f"⚠️ Telegram Error (Chat {chat_id}): {res.text}")
+                log(f"⚠️ Telegram Error (Chat {chat_id}): {res.text}")
         except Exception as e:
-            print(f"⚠️ Telegram Exception (Chat {chat_id}): {e}")
+            log(f"⚠️ Telegram Exception (Chat {chat_id}): {e}")
+
+def make_call(product_info, loc_name):
+    """Make a phone call via Twilio to alert about sniper product in stock."""
+    if not CALL_ENABLED:
+        log("📞 Call skipped — Twilio not configured.")
+        return
+
+    try:
+        client = TwilioClient(TWILIO_SID, TWILIO_AUTH)
+
+        # TwiML for text-to-speech message, repeated 3 times so you don't miss it
+        twiml = (
+            '<Response>'
+            '<Say voice="Polly.Aditi" language="en-IN" loop="3">'
+            f'Alert! Your Hot Wheels sniper link is now in stock in {loc_name}. '
+            f'{product_info}. '
+            'Open Blinkit immediately and place your order! '
+            '</Say>'
+            '</Response>'
+        )
+
+        call = client.calls.create(
+            to=MY_PHONE,
+            from_=TWILIO_PHONE,
+            twiml=twiml,
+            timeout=30
+        )
+
+        log(f"📞 Phone call initiated! SID: {call.sid}")
+    except Exception as e:
+        log(f"⚠️ Phone call failed: {e}")
 
 def matches_keywords(text):
     if not KEYWORDS:
@@ -151,7 +203,7 @@ def extract_products(page):
 def check_product_pages(context, loc_name, alerted_urls):
     triggered = False
     if PRODUCT_URLS:
-        print(f"[{loc_name}] Starting sniper check for {len(PRODUCT_URLS)} links...")
+        log(f"[{loc_name}] Starting sniper check for {len(PRODUCT_URLS)} links...")
 
     for url in PRODUCT_URLS:
         page = None
@@ -166,26 +218,48 @@ def check_product_pages(context, loc_name, alerted_urls):
             # 1. Ensure we didn't get redirected to the homepage
             if "/prn/" in current_url or "/prid/" in current_url:
                 
-                # 2. Look for an exact "ADD" button
-                buttons = page.locator("div[role='button'], button").all_inner_texts()
-                has_add = any(b.strip().upper() in ["ADD", "ADD TO CART"] for b in buttons)
+                # 2. Get the full page body text
+                body_text = ""
+                try:
+                    body_text = page.locator("body").inner_text()
+                except Exception:
+                    pass
                 
-                # 3. Look for "Out of stock" text anywhere on the page
-                oos_count = (
-                    page.locator("text='Out of Stock'").count() + 
-                    page.locator("text='Out of stock'").count() + 
-                    page.locator("text='Currently Unavailable'").count()
-                )
+                # 3. ISOLATE the main product section text only.
+                #    Blinkit pages have "Top products in this category" / "People also bought"
+                #    sections below the main product, each with their own ADD buttons.
+                #    We MUST ignore those — only look at text ABOVE those dividers.
+                main_text = body_text.lower()
+                for divider in ["top products in this category", "people also bought", "similar products", "you might also like"]:
+                    idx = main_text.find(divider)
+                    if idx != -1:
+                        main_text = main_text[:idx]
+                        break
                 
-                # It's only truly available if an ADD button exists AND it doesn't say Out of Stock
-                if has_add and oos_count == 0:
+                # 4. Check ONLY the main product section for OOS / Notify indicators
+                has_oos = any(x in main_text for x in [
+                    "out of stock", "currently unavailable", "notify me",
+                    "notify when available", "notify", "coming soon"
+                ])
+                
+                # 5. Check if the main product section has an ADD button
+                #    When in stock, Blinkit shows "Add" or "ADD" in the main section
+                has_add = "\nadd\n" in main_text or main_text.strip().endswith("\nadd")
+                
+                # 6. Final verdict: in stock ONLY if main section has ADD and NO OOS/notify
+                if has_add and not has_oos:
                     is_available = True
                     
-            print(f"[{loc_name}] Checked link {url[-6:]} | In Stock: {is_available}")
+                log(f"[{loc_name}] Checked {url[-6:]} | MainAdd: {has_add} | OOS: {has_oos} | InStock: {is_available}")
+            else:
+                log(f"[{loc_name}] Checked link {url[-6:]} | Redirected to homepage, skipping")
             
             if is_available:
                 if url not in alerted_urls:
                     send_telegram(f"🔥 PRODUCT LIVE ({loc_name})\n{url}")
+                    # Extract product name from URL for the call
+                    url_product = url.split("/prn/")[-1].split("/")[0].replace("-", " ") if "/prn/" in url else "sniper target"
+                    make_call(url_product, loc_name)
                     alerted_urls.add(url)
                     triggered = True
             else:
@@ -193,8 +267,8 @@ def check_product_pages(context, loc_name, alerted_urls):
                 if url in alerted_urls:
                     alerted_urls.remove(url)
 
-        except:
-            pass
+        except Exception as e:
+            log(f"[{loc_name}] Sniper check error for {url[-6:]}: {e}")
         finally:
             if page:
                 try:
@@ -205,7 +279,7 @@ def check_product_pages(context, loc_name, alerted_urls):
     return triggered
 
 def run():
-    print("🚀 Starting watcher...")
+    log("🚀 Starting watcher...")
 
     with sync_playwright() as p:
         proxy_cfg = None
@@ -222,7 +296,7 @@ def run():
                 }
             else:
                 proxy_cfg = {"server": p_url}
-            print("🌐 Using Proxy Server configuration.")
+            log("🌐 Using Proxy Server configuration.")
 
         browser = p.chromium.launch(
             headless=True,
@@ -259,13 +333,22 @@ def run():
 
             page = context.new_page()
             url = f"https://blinkit.com/s/?q={QUERY.replace(' ', '%20')}"
-            print(f"[{loc['name']}] Loading Blinkit... (Timeout: {PAGE_TIMEOUT}ms)")
+            log(f"[{loc['name']}] Loading Blinkit... (Timeout: {PAGE_TIMEOUT}ms)")
             time.sleep(2) # Stagger to avoid proxy spikes
             try:
                 page.goto(url, timeout=PAGE_TIMEOUT)
             except Exception as e:
-                print(f"⚠️ Proxy Timeout on {loc['name']}. Rotating IP...")
-                os._exit(1)
+                if os.getenv("PROXY_URL"):
+                    log(f"⚠️ Proxy error on {loc['name']}: {e}. Rotating IP...")
+                    os._exit(1)
+                else:
+                    log(f"⚠️ Page load failed on {loc['name']}: {e}. Retrying in 30s...")
+                    time.sleep(30)
+                    try:
+                        page.goto(url, timeout=PAGE_TIMEOUT)
+                    except Exception as e2:
+                        log(f"❌ Page load failed again on {loc['name']}: {e2}. Restarting...")
+                        os._exit(1)
 
             # ---- Blinkit Specific Initialization ----
             try:
@@ -282,12 +365,12 @@ def run():
                     loc_btn = page.locator("text='Detect my location'").first
                     loc_btn.wait_for(timeout=5000, state="visible")
                     loc_btn.click()
-                    print(f"[{loc['name']}] Clicked 'Detect my location'")
+                    log(f"[{loc['name']}] Clicked 'Detect my location'")
                     page.wait_for_timeout(3000) # Wait for products to load
                 except Exception:
-                    print(f"[{loc['name']}] 'Detect my location' button not found or not visible.")
+                    log(f"[{loc['name']}] 'Detect my location' button not found or not visible.")
             except Exception as e:
-                print(f"Setup error for {loc['name']}: {e}")
+                log(f"Setup error for {loc['name']}: {e}")
             # ----------------------------------------
 
             contexts[loc["name"]] = {
@@ -297,13 +380,9 @@ def run():
             seen_search_items[loc["name"]] = set()
             alerted_sniper_urls[loc["name"]] = set()
 
-        from datetime import datetime, timezone, timedelta
-        IST = timezone(timedelta(hours=5, minutes=30))
         last_heartbeat_hour = datetime.now(IST).hour
 
         while True:
-            from datetime import datetime, timezone, timedelta
-            IST = timezone(timedelta(hours=5, minutes=30))
             now = datetime.now(IST)
             
             # Dynamic heartbeat check
@@ -333,7 +412,7 @@ def run():
                         page_text = page.locator("body").inner_text().lower()
                         if "verify you are human" in page_text or "just a moment" in page_text or "access denied" in page_text:
                             msg = f"🚨 CAPTCHA/IP BLOCK DETECTED on {name}! Render IP is blocked by Blinkit. Pausing bot for {BLOCK_PAUSE_MINUTES} minutes to prevent spam..."
-                            print(msg)
+                            log(msg)
                             send_telegram(msg)
                             # Sleep in small chunks to keep watchdog alive
                             for _ in range(BLOCK_PAUSE_MINUTES):
@@ -359,23 +438,23 @@ def run():
                             new_hits.append(product_display)
 
                     if new_hits:
-                        print(f"[{name}] 🆕 Found {len(new_hits)} NEW products! (Total: {len(items)})")
+                        log(f"[{name}] 🆕 Found {len(new_hits)} NEW products! (Total: {len(items)})")
                         msg = f"🔥 DROP ({name})\n\n" + "\n\n".join(new_hits[:10])
-                        print(f"\n{msg}\n")
+                        log(f"\n{msg}\n")
                         send_telegram(msg)
                         triggered = True
                     else:
-                        print(f"[{name}] Checked — {len(items)} products, no new finds.")
+                        log(f"[{name}] Checked — {len(items)} products, no new finds.")
 
                     # sniper check
                     if check_product_pages(context, name, alerted_sniper_urls[name]):
                         triggered = True
 
                 except Exception as e:
-                    print(f"Error ({name}):", e)
+                    log(f"Error ({name}): {e}")
                     err_str = str(e).lower()
                     if any(x in err_str for x in ["target closed", "browser closed", "disconnected", "timeout", "tunnel", "connection refused", "connection reset"]):
-                        print("⚠️ FATAL: Browser or proxy failure detected. Exiting process to trigger container restart...")
+                        log("⚠️ FATAL: Browser or proxy failure detected. Exiting process to trigger container restart...")
                         os._exit(1)
 
             if triggered:
@@ -405,10 +484,24 @@ def start_dummy_server():
             self.end_headers()
     
     server = HTTPServer(('0.0.0.0', port), Handler)
-    print(f"🌐 Started dummy web server on port {port} to satisfy Render requirements.")
+    log(f"🌐 Started dummy web server on port {port} to satisfy Render requirements.")
     server.serve_forever()
 
 if __name__ == "__main__":
     if os.environ.get("RENDER") or os.environ.get("PORT"):
         threading.Thread(target=start_dummy_server, daemon=True).start()
-    run()
+
+    try:
+        run()
+    except SystemExit:
+        raise  # Let os._exit() and sys.exit() pass through
+    except Exception as e:
+        loc_names = ", ".join(l["name"] for l in LOCATIONS) if LOCATIONS else "unknown"
+        crash_msg = f"💀 BOT CRASHED ({loc_names})\n\nError: {type(e).__name__}: {e}\n\n♻️ Auto-restart will recover in ~10 seconds..."
+        log(f"FATAL UNHANDLED EXCEPTION: {e}")
+        try:
+            send_telegram(crash_msg)
+        except Exception:
+            pass  # Don't let Telegram failure prevent the exit
+        import sys
+        sys.exit(1)

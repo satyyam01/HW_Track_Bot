@@ -21,6 +21,7 @@ CHAT_ID = os.getenv("CHAT_ID")
 QUERY = os.getenv("TRACK_QUERY", "hot wheels")
 
 KEYWORDS = [k.strip().lower() for k in os.getenv("KEYWORDS", "").split(",") if k.strip()]
+VIP_KEYWORDS = [k.strip().lower() for k in os.getenv("VIP_KEYWORDS", "").split(",") if k.strip()]
 PRODUCT_URLS = [u.strip() for u in os.getenv("PRODUCT_URLS", "").split(",") if u.strip()]
 
 CHECK_INTERVAL = int(os.getenv("CHECK_INTERVAL", 8))
@@ -200,6 +201,54 @@ def extract_products(page):
 
     return list(set(items))
 
+def _sniper_stock_check(page, loc_name, url_suffix):
+    """
+    Single stock check for a sniper product page.
+    Returns (has_add, has_oos, is_available).
+    Assumes the page is already loaded and hydrated.
+    """
+    current_url = page.url
+
+    if "/prn/" not in current_url and "/prid/" not in current_url:
+        log(f"[{loc_name}] Checked link {url_suffix} | Redirected to homepage, skipping")
+        return (False, False, False)
+
+    body_text = ""
+    try:
+        body_text = page.locator("body").inner_text()
+    except Exception:
+        return (False, False, False)
+
+    # Isolate main product section — cut off recommendation widgets
+    main_text = body_text.lower()
+    divider_found = False
+    for divider in ["top products in this category", "people also bought",
+                     "similar products", "you might also like",
+                     "explore more from this category", "frequently bought together"]:
+        idx = main_text.find(divider)
+        if idx != -1:
+            main_text = main_text[:idx]
+            divider_found = True
+            break
+
+    if not divider_found:
+        # No divider found — the entire page text is being searched.
+        # This is risky: recommendation ADD buttons could leak in.
+        log(f"[{loc_name}] ⚠️ {url_suffix} — no section divider found, full-page text used (higher FP risk)")
+
+    # Check for OOS / Notify indicators
+    has_oos = any(x in main_text for x in [
+        "out of stock", "currently unavailable", "notify me",
+        "notify when available", "notify", "coming soon", "sold out"
+    ])
+
+    # Check for ADD button text
+    has_add = "\nadd\n" in main_text or main_text.strip().endswith("\nadd")
+
+    is_available = has_add and not has_oos
+    return (has_add, has_oos, is_available)
+
+
 def check_product_pages(context, loc_name, alerted_urls):
     triggered = False
     if PRODUCT_URLS:
@@ -210,50 +259,27 @@ def check_product_pages(context, loc_name, alerted_urls):
         try:
             page = context.new_page()
             page.goto(url, timeout=20000)
-            page.wait_for_timeout(2500)
-            
-            current_url = page.url
-            is_available = False
-            
-            # 1. Ensure we didn't get redirected to the homepage
-            if "/prn/" in current_url or "/prid/" in current_url:
-                
-                # 2. Get the full page body text
-                body_text = ""
-                try:
-                    body_text = page.locator("body").inner_text()
-                except Exception:
-                    pass
-                
-                # 3. ISOLATE the main product section text only.
-                #    Blinkit pages have "Top products in this category" / "People also bought"
-                #    sections below the main product, each with their own ADD buttons.
-                #    We MUST ignore those — only look at text ABOVE those dividers.
-                main_text = body_text.lower()
-                for divider in ["top products in this category", "people also bought", "similar products", "you might also like"]:
-                    idx = main_text.find(divider)
-                    if idx != -1:
-                        main_text = main_text[:idx]
-                        break
-                
-                # 4. Check ONLY the main product section for OOS / Notify indicators
-                has_oos = any(x in main_text for x in [
-                    "out of stock", "currently unavailable", "notify me",
-                    "notify when available", "notify", "coming soon"
-                ])
-                
-                # 5. Check if the main product section has an ADD button
-                #    When in stock, Blinkit shows "Add" or "ADD" in the main section
-                has_add = "\nadd\n" in main_text or main_text.strip().endswith("\nadd")
-                
-                # 6. Final verdict: in stock ONLY if main section has ADD and NO OOS/notify
-                if has_add and not has_oos:
-                    is_available = True
-                    
-                log(f"[{loc_name}] Checked {url[-6:]} | MainAdd: {has_add} | OOS: {has_oos} | InStock: {is_available}")
-            else:
-                log(f"[{loc_name}] Checked link {url[-6:]} | Redirected to homepage, skipping")
-            
+            page.wait_for_timeout(4000)  # Increased from 2500ms for React hydration
+
+            url_suffix = url[-6:]
+            has_add, has_oos, is_available = _sniper_stock_check(page, loc_name, url_suffix)
+            log(f"[{loc_name}] Checked {url_suffix} | MainAdd: {has_add} | OOS: {has_oos} | InStock: {is_available}")
+
+            # --- CONFIRMATION RE-CHECK ---
+            # If stock detected, reload and verify to eliminate false positives
+            # from hydration races, CDN caching, or stale DOM state.
+            if is_available:
+                log(f"[{loc_name}] ⚡ Stock detected for {url_suffix} — confirming with re-check...")
+                page.reload(timeout=20000)
+                page.wait_for_timeout(4000)
+
+                has_add2, has_oos2, confirmed = _sniper_stock_check(page, loc_name, url_suffix)
+                log(f"[{loc_name}] Re-check {url_suffix} | MainAdd: {has_add2} | OOS: {has_oos2} | Confirmed: {confirmed}")
+
+                if not confirmed:
+                    log(f"[{loc_name}] ❌ FALSE POSITIVE caught for {url_suffix} — not confirmed on re-check")
+                    is_available = False
+
             if is_available:
                 if url not in alerted_urls:
                     send_telegram(f"🔥 PRODUCT LIVE ({loc_name})\n{url}")
@@ -429,22 +455,53 @@ def run():
                         page.wait_for_timeout(1000)
 
                     items = extract_products(page)
+                    
+                    potential_new_hits = []
+                    for p_name, p_display in items:
+                        if p_name not in seen_search_items[name]:
+                            potential_new_hits.append((p_name, p_display))
+                    
+                    final_new_hits = []
+                    vip_confirmed_count = 0
+                    
+                    # If any new items are found, RELOAD once to confirm they are real
+                    if potential_new_hits:
+                        log(f"[{name}] 🔍 {len(potential_new_hits)} potential new items found. Reloading to verify...")
+                        page.reload(timeout=PAGE_TIMEOUT)
+                        page.wait_for_timeout(5000)
+                        
+                        confirmed_items = extract_products(page)
+                        confirmed_names = {p[0] for p in confirmed_items}
+                        
+                        for p_name, p_display in potential_new_hits:
+                            if p_name in confirmed_names:
+                                seen_search_items[name].add(p_name)
+                                final_new_hits.append(p_display)
+                                
+                                # Check if this confirmed item is a VIP
+                                if any(vk in p_name.lower() for vk in VIP_KEYWORDS):
+                                    vip_confirmed_count += 1
+                                    log(f"[{name}] ✅ VIP Confirmed: {p_name}")
+                                else:
+                                    log(f"[{name}] ✅ Confirmed: {p_name}")
+                            else:
+                                log(f"[{name}] ❌ False Positive caught (disappeared after reload): {p_name}")
 
-                    new_hits = []
-
-                    for product_name, product_display in items:
-                        if product_name not in seen_search_items[name]:
-                            seen_search_items[name].add(product_name)
-                            new_hits.append(product_display)
-
-                    if new_hits:
-                        log(f"[{name}] 🆕 Found {len(new_hits)} NEW products! (Total: {len(items)})")
-                        msg = f"🔥 DROP ({name})\n\n" + "\n\n".join(new_hits[:10])
+                    if final_new_hits:
+                        log(f"[{name}] 🆕 Verified {len(final_new_hits)} NEW products!")
+                        msg = f"🔥 DROP ({name})\n\n" + "\n\n".join(final_new_hits[:10])
                         log(f"\n{msg}\n")
                         send_telegram(msg)
+                        
+                        if vip_confirmed_count > 0:
+                            make_call(f"Confirmed {vip_confirmed_count} high priority items", name)
+                        
                         triggered = True
                     else:
-                        log(f"[{name}] Checked — {len(items)} products, no new finds.")
+                        if potential_new_hits:
+                            log(f"[{name}] All {len(potential_new_hits)} potential hits were false positives.")
+                        else:
+                            log(f"[{name}] Checked — {len(items)} products, no new finds.")
 
                     # sniper check
                     if check_product_pages(context, name, alerted_sniper_urls[name]):
